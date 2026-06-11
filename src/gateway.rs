@@ -24,11 +24,14 @@ use crate::{
     error::ApiError,
 };
 
+type SharedConfig = tokio::sync::RwLock<Arc<AppConfig>>;
+
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<AppConfig>,
+    pub config: Arc<SharedConfig>,
     pub client: reqwest::Client,
     pub stats: Arc<RwLock<HashMap<String, ProviderStats>>>,
+    pub config_path: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,10 +63,11 @@ pub async fn models(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    authorize(&state.config, &headers)?;
+    let config = state.config.read().await.clone();
 
-    let mut data = state
-        .config
+    authorize(&config, &headers)?;
+
+    let mut data = config
         .models
         .iter()
         .map(|(id, route)| ModelDescriptor {
@@ -119,7 +123,9 @@ pub async fn chat_completions(
     headers: HeaderMap,
     Json(mut payload): Json<Value>,
 ) -> Result<Response, ApiError> {
-    authorize(&state.config, &headers)?;
+    let config = state.config.read().await.clone();
+
+    authorize(&config, &headers)?;
 
     let requested_model = payload
         .get("model")
@@ -127,13 +133,13 @@ pub async fn chat_completions(
         .ok_or(ApiError::MissingModel)?
         .to_string();
 
-    let route = state
-        .config
+    let route = config
         .models
         .get(&requested_model)
-        .ok_or_else(|| ApiError::UnknownModel(requested_model.clone()))?;
+        .ok_or_else(|| ApiError::UnknownModel(requested_model.clone()))?
+        .clone();
 
-    let candidates = ordered_candidates(&state, route.strategy.clone(), &route.candidates).await;
+    let candidates = ordered_candidates(&config, &state.stats, route.strategy.clone(), &route.candidates).await;
     if candidates.is_empty() {
         return Err(ApiError::NoEnabledProvider(requested_model));
     }
@@ -157,16 +163,16 @@ pub async fn chat_completions(
 }
 
 async fn ordered_candidates(
-    state: &AppState,
+    config: &AppConfig,
+    stats: &tokio::sync::RwLock<HashMap<String, ProviderStats>>,
     strategy: RouteStrategy,
     candidates: &[ModelCandidate],
 ) -> Vec<ModelCandidate> {
-    let stats = state.stats.read().await;
+    let stats = stats.read().await;
     let mut enabled = candidates
         .iter()
         .filter(|candidate| {
-            state
-                .config
+            config
                 .providers
                 .get(&candidate.provider)
                 .map(|provider| provider.enabled)
@@ -189,19 +195,18 @@ async fn ordered_candidates(
             a_latency
                 .partial_cmp(&b_latency)
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| provider_priority(state, a).cmp(&provider_priority(state, b)))
+                .then_with(|| provider_priority(config, a).cmp(&provider_priority(config, b)))
         }),
         RouteStrategy::Priority => {
-            enabled.sort_by_key(|candidate| provider_priority(state, candidate));
+            enabled.sort_by_key(|candidate| provider_priority(config, candidate));
         }
     }
 
     enabled
 }
 
-fn provider_priority(state: &AppState, candidate: &ModelCandidate) -> u32 {
-    state
-        .config
+fn provider_priority(config: &AppConfig, candidate: &ModelCandidate) -> u32 {
+    config
         .providers
         .get(&candidate.provider)
         .map(|provider| provider.priority)
@@ -213,11 +218,12 @@ async fn forward_openai_compatible(
     candidate: &ModelCandidate,
     payload: &Value,
 ) -> Result<Response, String> {
-    let provider = state
-        .config
+    let config = state.config.read().await.clone();
+    let provider = config
         .providers
         .get(&candidate.provider)
-        .ok_or_else(|| format!("unknown provider '{}'", candidate.provider))?;
+        .ok_or_else(|| format!("unknown provider '{}'", candidate.provider))?
+        .clone();
     match provider.kind {
         ProviderKind::OpenaiCompatible => {}
     }
