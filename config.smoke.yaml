@@ -1,0 +1,22 @@
+server:
+  bind: "127.0.0.1:1789"
+  request_timeout_ms: 1000
+  gateway_api_keys:
+    - "dev-local-key"
+
+providers:
+  disabled_local:
+    type: "openai-compatible"
+    base_url: "http://127.0.0.1:9999/v1"
+    api_key_env: "DISABLED_LOCAL_KEY"
+    enabled: false
+    priority: 1
+
+models:
+  smoke:
+    description: "Disabled route for local server smoke tests"
+    strategy: "priority"
+    fallback: false
+    candidates:
+      - provider: "disabled_local"
+        model: "smoke"

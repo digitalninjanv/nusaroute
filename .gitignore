@@ -1,0 +1,6 @@
+/target
+config.yaml
+ide.md
+.env
+.env.*
+*.log

@@ -1,0 +1,48 @@
+server:
+  bind: "127.0.0.1:1789"
+  request_timeout_ms: 45000
+  gateway_api_keys:
+    - "dev-local-key"
+
+providers:
+  openrouter:
+    type: "openai-compatible"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "OPENROUTER_API_KEY"
+    enabled: true
+    priority: 10
+
+  openai:
+    type: "openai-compatible"
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+    enabled: false
+    priority: 20
+
+  local_vllm:
+    type: "openai-compatible"
+    base_url: "http://127.0.0.1:8000/v1"
+    api_key_env: "LOCAL_LLM_API_KEY"
+    enabled: false
+    priority: 1
+
+models:
+  smart-fast:
+    description: "Low-latency default for coding tools and chat"
+    strategy: "lowest_latency"
+    fallback: true
+    candidates:
+      - provider: "local_vllm"
+        model: "qwen-coder-fast"
+      - provider: "openrouter"
+        model: "openai/gpt-5.5-mini"
+      - provider: "openai"
+        model: "gpt-5.5-mini"
+
+  smart-pro:
+    description: "Higher-quality route with fallback"
+    strategy: "priority"
+    fallback: true
+    candidates:
+      - provider: "openrouter"
+        model: "nvidia/nemotron-3-ultra-550b-a55b:free"
